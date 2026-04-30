@@ -6,7 +6,7 @@ metadata:
 spec:
   project: default
   source:
-    repoURL: https://github.com/CSmohmmadSH/task-tracker.git
+    repoURL: https://github.com/subham1853/Task-Tracker-GitOps-Platform-on-AWS-EKS-
     targetRevision: main
     path: k8s
   destination:
