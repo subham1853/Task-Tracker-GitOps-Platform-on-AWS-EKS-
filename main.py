@@ -3,25 +3,50 @@ from pydantic import BaseModel
 from prometheus_client import Counter, generate_latest, CONTENT_TYPE_LATEST
 from fastapi.responses import Response
 from sqlalchemy import create_engine, Column, String, Boolean
+from sqlalchemy.exc import OperationalError
 from sqlalchemy.orm import declarative_base, sessionmaker, Session
 from contextlib import asynccontextmanager
 from typing import List
 import os
+import time
 import uuid
 
 # ---------- Database setup ----------
 
-DB_HOST = os.environ.get("DB_HOST", "localhost")
+DB_HOST = os.environ.get("DB_HOST")
 DB_PORT = os.environ.get("DB_PORT", "5432")
 DB_NAME = os.environ.get("DB_NAME", "tasks")
 DB_USER = os.environ.get("DB_USER", "tasks")
 DB_PASSWORD = os.environ.get("DB_PASSWORD", "tasks")
 
-DATABASE_URL = f"postgresql://{DB_USER}:{DB_PASSWORD}@{DB_HOST}:{DB_PORT}/{DB_NAME}"
+DATABASE_URL = os.environ.get("DATABASE_URL")
+if not DATABASE_URL:
+    if DB_HOST:
+        DATABASE_URL = f"postgresql+pg8000://{DB_USER}:{DB_PASSWORD}@{DB_HOST}:{DB_PORT}/{DB_NAME}"
+    else:
+        DATABASE_URL = "sqlite:///./tasks.db"
 
-engine = create_engine(DATABASE_URL)
+engine_kwargs = {}
+if DATABASE_URL.startswith("sqlite"):
+    engine_kwargs["connect_args"] = {"check_same_thread": False}
+
+engine = create_engine(DATABASE_URL, **engine_kwargs)
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 Base = declarative_base()
+
+
+def create_tables_with_retry():
+    retries = int(os.environ.get("DB_STARTUP_RETRIES", "30"))
+    delay = int(os.environ.get("DB_STARTUP_DELAY_SECONDS", "2"))
+
+    for attempt in range(1, retries + 1):
+        try:
+            Base.metadata.create_all(bind=engine)
+            return
+        except OperationalError:
+            if attempt == retries:
+                raise
+            time.sleep(delay)
 
 
 class TaskModel(Base):
@@ -36,7 +61,7 @@ class TaskModel(Base):
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    Base.metadata.create_all(bind=engine)
+    create_tables_with_retry()
     yield
 
 
